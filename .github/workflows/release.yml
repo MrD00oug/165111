@@ -1,0 +1,30 @@
+# Publica uma Release quando um APK novo entra na pasta releases/.
+# O APK já vem compilado e assinado; aqui só vira Release pro botão "Atualizar" do app achar.
+name: publicar-versao
+on:
+  push:
+    branches: [main]
+    paths: ['releases/*.apk']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Criar release do APK mais novo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=$(ls releases/*.apk | sort -V | tail -1)
+          name=$(basename "$apk")
+          ver=$(echo "$name" | sed -E 's/TripperMeteor-([0-9.]+)-b[0-9]+\.apk/\1/')
+          notes_file="releases/notas-$ver.txt"
+          notes="Versão $ver"
+          [ -f "$notes_file" ] && notes="$(cat "$notes_file")"
+          if gh release view "v$ver" >/dev/null 2>&1; then
+            echo "v$ver já existe"
+          else
+            gh release create "v$ver" "$apk" --title "$ver" --notes "$notes" --latest
+          fi

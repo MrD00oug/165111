@@ -1,0 +1,1 @@
+Radarbot no pod, marcar radar e "não é radar", modo só radar, interface nova.
