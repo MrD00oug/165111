@@ -22,7 +22,7 @@ echo "== recursos (aapt2)"
 
 echo "== java"
 javac -nowarn --release 8 -encoding UTF-8 -classpath "$ANDROID_JAR" \
-  -d build/classes $(find src build/gen -name '*.java') 2>&1 | grep -v "^warning\|^Picked up\|bootstrap\|^1 warning\|^[0-9]* warnings" || true
+  -d build/classes $(find src build/gen -name '*.java') > build/javac.log 2>&1 || { grep -v "^Picked up" build/javac.log; echo "ERRO DE COMPILAÇÃO"; exit 1; }
 test -f build/classes/com/lucas/trippermeteor/MainActivity.class
 
 echo "== dex (d8)"

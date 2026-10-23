@@ -40,7 +40,10 @@ public class Core implements Pod.Listener, Navigator.Out {
     public final MapsBridge bridge;
     public final RadarStore radars;
     public final Navigator.Settings set = new Navigator.Settings();
-    public final List<String> captures = new ArrayList<>();
+    public final List<String> captures = new ArrayList<>();          // todas, mais nova primeiro
+    private final java.util.Map<String, String> lastCap = new java.util.HashMap<>();
+    private final java.util.Map<String, Integer> capCount = new java.util.HashMap<>();
+    private long podLostAt = 0;
     public final SharedPreferences prefs;
     private final Handler h = new Handler(Looper.getMainLooper());
     private Ui ui;
@@ -72,6 +75,16 @@ public class Core implements Pod.Listener, Navigator.Out {
     public long fixAt = 0;
 
     public void onLocation(double lat, double lon, double speed, double heading, double acc) {
+        // pod sumido há 10 min (moto desligada): encerra a navegação e para de procurar
+        if (navigating() && podLostAt > 0 && System.currentTimeMillis() - podLostAt > 10 * 60 * 1000) {
+            podLostAt = 0;
+            onLog("pod sem conexão há 10 min: navegação encerrada", Pod.LOG_INFO);
+            bridge.setEnabled(false);
+            if (nav.isActive()) nav.stop();
+            pod.persistent = false;
+            finished();
+            return;
+        }
         fixLat = lat; fixLon = lon; fixSpeed = speed; fixAt = System.currentTimeMillis();
         if (speed > 1.5 && heading >= 0) fixHeading = heading;
         nav.onLocation(lat, lon, speed, heading, acc);
@@ -116,9 +129,24 @@ public class Core implements Pod.Listener, Navigator.Out {
     }
 
     /** Notificação crua do Maps (para a Bancada). */
-    public void capture(String line) {
+    public void capture(String app, String line) {
+        // ignora repetição idêntica (sem contar a hora)
+        String body = line.length() > 9 ? line.substring(9) : line;
+        if (body.equals(lastCap.get(app))) return;
+        lastCap.put(app, body);
         captures.add(0, line);
-        while (captures.size() > 40) captures.remove(captures.size() - 1);
+        // o Maps atualiza toda hora: guarda menos dele pra não empurrar os do Radarbot/Waze pra fora
+        int mapsMax = 25, otherMax = 80, maps = 0, other = 0;
+        for (int i = 0; i < captures.size(); i++) {
+            boolean isMaps = captures.get(i).startsWith("MAPS", 9);
+            if (isMaps ? ++maps > mapsMax : ++other > otherMax) { captures.remove(i); i--; }
+        }
+        capCount.put(app, capCount.getOrDefault(app, 0) + 1);
+    }
+
+    public String captureSummary() {
+        return "Maps: " + capCount.getOrDefault("MAPS", 0) + "  ·  Radarbot: " + capCount.getOrDefault("RADARBOT", 0)
+                + "  ·  Waze: " + capCount.getOrDefault("WAZE", 0);
     }
 
     // ---------------- ajustes ----------------
@@ -184,7 +212,10 @@ public class Core implements Pod.Listener, Navigator.Out {
 
     @Override
     public void onState(int s) {
+        int prev = podState;
         podState = s;
+        if (s == 3) podLostAt = 0;
+        else if (prev == 3 && podLostAt == 0) podLostAt = System.currentTimeMillis(); // só conta se estava conectado
         lastSent = null;
         if (s == 3 && current != null) pod.setKeepalive(current);
         if (ui != null) ui.onPodState(s);

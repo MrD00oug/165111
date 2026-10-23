@@ -123,7 +123,8 @@ public class Pod {
 
         @Override
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
-            log("servidor: " + device.getAddress() + (newState == BluetoothProfile.STATE_CONNECTED ? " conectou" : " saiu"), LOG_INFO);
+            if (device.getAddress().equals(deviceAddress))
+                log("servidor: pod " + (newState == BluetoothProfile.STATE_CONNECTED ? "conectou" : "saiu"), LOG_INFO);
         }
 
         @Override
@@ -287,7 +288,7 @@ public class Pod {
                         retries++;
                         l.onLog("reconectando (" + retries + (persistent ? "" : "/5") + ")…", LOG_INFO);
                         h.postDelayed(() -> { if (!userDisconnect && gatt == null) connectTo(adapter.getRemoteDevice(deviceAddress)); },
-                                Math.min(10000, 1500L * Math.min(retries, 6)));
+                                retries <= 6 ? 1500L * retries : Math.min(30000, 10000L + 2000L * (retries - 6)));
                     }
                 });
             }

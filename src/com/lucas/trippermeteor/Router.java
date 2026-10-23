@@ -368,4 +368,14 @@ public final class Router {
         if (s.contains("mph")) v = (int) Math.round(v * 1.609);
         return v;
     }
+
+    /** Aceita "usuario/projeto", o link inteiro, com espaço, ".git" ou barra no fim. */
+    public static String cleanRepo(String s) {
+        String r = s == null ? "" : s.trim();
+        r = r.replaceAll("(?i)^(https?://)?(www\\.)?github\\.com/", "");
+        r = r.replaceAll("(?i)\\.git$", "").replaceAll("/+$", "");
+        String[] p = r.split("/");
+        return p.length >= 2 ? p[0].trim() + "/" + p[1].trim() : r;
+    }
+
 }

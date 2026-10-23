@@ -88,7 +88,7 @@ public class MainActivity extends Activity implements Core.Ui {
 
     // ajustes
     private EditText radarIconEt, pinEt, repoEt;
-    private TextView updTxt;
+    private TextView updTxt, updBanner;
     private int connectMode = 0;
 
     // ferramentas
@@ -132,6 +132,7 @@ public class MainActivity extends Activity implements Core.Ui {
     @Override
     protected void onResume() {
         super.onResume();
+        quietUpdateCheck();
         refreshHome();
         refreshCaptures();
     }
@@ -498,8 +499,9 @@ public class MainActivity extends Activity implements Core.Ui {
     // ================= atualização =================
 
     private void checkUpdate() {
-        String repo = repoEt.getText().toString().trim().replaceAll("^https?://github.com/", "").replaceAll("/$", "");
+        String repo = Router.cleanRepo(repoEt.getText().toString());
         if (!repo.contains("/")) { updTxt.setText("Coloque o repositório no formato usuario/projeto"); return; }
+        repoEt.setText(repo);
         uiPrefs.edit().putString("repo", repo).apply();
         updTxt.setText("Procurando…");
         io.execute(() -> {
@@ -525,6 +527,42 @@ public class MainActivity extends Activity implements Core.Ui {
                 h.post(() -> updTxt.setText("Não achei atualização: " + e.getMessage()));
             }
         });
+    }
+
+    static final String DEFAULT_REPO = "MrD00oug/165111";
+
+    private String repo() {
+        String r = Router.cleanRepo(uiPrefs.getString("repo", ""));
+        return r.contains("/") ? r : DEFAULT_REPO;
+    }
+
+    /** Ao abrir o app, olha (no máximo 1x a cada 6 h) se tem versão nova. */
+    private void quietUpdateCheck() {
+        long last = uiPrefs.getLong("lastUpdCheck", 0);
+        if (System.currentTimeMillis() - last < 6 * 3600 * 1000L) {
+            boolean still = uiPrefs.getInt("newBuild", 0) > Updater.currentBuild(this);
+            showUpdateBanner(still ? uiPrefs.getString("newVersion", null) : null);
+            return;
+        }
+        uiPrefs.edit().putLong("lastUpdCheck", System.currentTimeMillis()).apply();
+        final String repo = repo();
+        io.execute(() -> {
+            try {
+                Updater.Release r = Updater.latest(repo);
+                boolean newer = r.build > Updater.currentBuild(this);
+                h.post(() -> {
+                    uiPrefs.edit().putString("newVersion", newer ? r.name : null).putInt("newBuild", r.build).apply();
+                    showUpdateBanner(newer ? r.name : null);
+                });
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private void showUpdateBanner(String version) {
+        if (updBanner == null) return;
+        boolean show = version != null && !core.navigating();
+        updBanner.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) updBanner.setText("Versão " + version + " disponível · toque para atualizar");
     }
 
     // ================= bancada =================
@@ -599,10 +637,20 @@ public class MainActivity extends Activity implements Core.Ui {
     private void refreshCaptures() {
         if (capTxt == null) return;
         StringBuilder sb = new StringBuilder();
-        int n = Math.min(4, core.captures.size());
-        for (int i = 0; i < n; i++) sb.append(core.captures.get(i)).append("\n\n");
+        int n = 0;
+        for (String c : core.captures) {            // mostra primeiro as do Radarbot/Waze
+            if (c.startsWith("MAPS", 9)) continue;
+            sb.append(c).append("\n\n");
+            if (++n >= 4) break;
+        }
+        for (String c : core.captures) {
+            if (n >= 5) break;
+            if (!c.startsWith("MAPS", 9)) continue;
+            sb.append(c).append("\n\n");
+            n++;
+        }
         capTxt.setText(core.captures.isEmpty() ? "Nenhuma ainda. Ative um modo e use o Maps, o Radarbot ou o Waze." :
-                core.captures.size() + " capturadas. Últimas:\n\n" + sb);
+                core.captureSummary() + "\n\n" + sb);
     }
 
     private void copy(String label, String t) {
@@ -889,6 +937,15 @@ public class MainActivity extends Activity implements Core.Ui {
         pc.addView(podBtn, new LinearLayout.LayoutParams(-2, dp(42)));
         tab.addView(pc, new LinearLayout.LayoutParams(-1, -2));
 
+        updBanner = text("", 14, 0xFF1A1300, true);
+        updBanner.setPadding(dp(16), dp(14), dp(16), dp(14));
+        updBanner.setBackground(round(ACC, 0, 16));
+        updBanner.setVisibility(View.GONE);
+        updBanner.setOnClickListener(v -> { selectTab(1); checkUpdate(); });
+        LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(-1, -2);
+        ulp.topMargin = dp(10);
+        tab.addView(updBanner, ulp);
+
         tab.addView(caption("NAVEGAR"));
         mapsSub = modeTile(tab, arrow(21, ACC), "Google Maps", "", true, v -> startMaps());
         ArrowView radar = new ArrowView(this);
@@ -1120,7 +1177,7 @@ public class MainActivity extends Activity implements Core.Ui {
         LinearLayout c5 = card(tab);
         c5.addView(text("Versão " + Updater.currentName(this) + " (build " + Updater.currentBuild(this) + ")", 14, TXT, false));
         c5.addView(settingLabel("Repositório no GitHub"));
-        repoEt = edit("usuario/tripper-meteor", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI, uiPrefs.getString("repo", ""));
+        repoEt = edit(DEFAULT_REPO, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI, repo());
         c5.addView(repoEt);
         c5.addView(row(btn("Procurar atualização", true, v -> checkUpdate())));
         updTxt = text("", 13, TXT, false);

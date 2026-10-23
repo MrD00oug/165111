@@ -171,27 +171,45 @@ public class RadarStore {
         return d > 180 ? 360 - d : d;
     }
 
+    /** Candidato à frente: radar, metros à frente e metros para o lado. */
+    public static class Ahead {
+        public Radar r;
+        public double along, cross;
+    }
+
     /**
-     * Radar à frente sem rota (modo Google Maps): usa posição e rumo.
-     * Retorna {radar, distância à frente} ou null.
+     * Radares à frente sem rota (modo Google Maps / só radar), pela posição e rumo.
+     * O radar "travado" (o que já está na tela) tem tolerância maior, pra não piscar.
+     * Também devolve os radares das pistas paralelas (até 60 m pro lado), pra achar o menor limite.
      */
-    public synchronized Object[] ahead(double lat, double lon, double heading, int maxDist) {
-        if (heading < 0) return null;
-        Radar best = null;
-        double bestAlong = 1e9;
+    public synchronized List<Ahead> scan(double lat, double lon, double heading, int maxDist, long lockedId) {
+        List<Ahead> out = new ArrayList<>();
+        if (heading < 0) return out;
         for (Radar r : radars.values()) {
             double d = Geo.dist(lat, lon, r.lat, r.lon);
-            if (d > maxDist + 60) continue;
+            if (d > maxDist + 80) continue;
             double brg = Geo.bearing(lat, lon, r.lat, r.lon);
             double diff = Math.toRadians(((brg - heading) % 360 + 540) % 360 - 180);
             double along = d * Math.cos(diff), cross = Math.abs(d * Math.sin(diff));
             if (along < -30 || along > maxDist) continue;
-            double tol = Math.max(18, along * 0.07); // em curva aceita um pouco mais de lado
+            if (!Double.isNaN(r.dir) && angDiff(r.dir, heading) > 55) continue; // outro sentido
+            boolean locked = r.id == lockedId;
+            double tol = locked ? Math.max(45, along * 0.15) : Math.max(60, along * 0.12);
             if (cross > tol) continue;
-            if (!Double.isNaN(r.dir) && angDiff(r.dir, heading) > 55) continue; // radar do outro sentido
-            if (along < bestAlong) { bestAlong = along; best = r; }
+            Ahead x = new Ahead();
+            x.r = r; x.along = along; x.cross = cross;
+            out.add(x);
         }
-        return best == null ? null : new Object[]{best, bestAlong};
+        java.util.Collections.sort(out, (x, y) -> Double.compare(x.along, y.along));
+        return out;
+    }
+
+    /** Compatível com os testes antigos: o radar da pista (até ~18 m pro lado) mais perto. */
+    public synchronized Object[] ahead(double lat, double lon, double heading, int maxDist) {
+        for (Ahead x : scan(lat, lon, heading, maxDist, 0)) {
+            if (x.cross <= Math.max(18, x.along * 0.07)) return new Object[]{x.r, x.along};
+        }
+        return null;
     }
 
     // ---------------- arquivo ----------------

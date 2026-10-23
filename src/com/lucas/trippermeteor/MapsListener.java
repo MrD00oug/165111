@@ -68,7 +68,7 @@ public class MapsListener extends NotificationListenerService {
         // alerta de radar de outro app (Radarbot; Waze se vier no texto)
         if (!MAPS.equals(pkg)) {
             Object[] ra = MapsParser.radarAlert(title, text, meta);
-            core.capture(String.format(Locale.US, "%s %s | id=%d cat=%s ongoing=%s | título=[%s] texto=[%s] big=[%s] sub=[%s] info=[%s] resumo=[%s] | -> %s",
+            core.capture(app, String.format(Locale.US, "%s %s | id=%d cat=%s ongoing=%s | título=[%s] texto=[%s] big=[%s] sub=[%s] info=[%s] resumo=[%s] | -> %s",
                     new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()), app, sbn.getId(), n.category, ongoing, title, text,
                     big.equals(text) ? "=" : big, sub, info, summary,
                     ra == null ? "não é alerta" : ("alerta " + ra[2] + " " + ra[0] + " m, limite " + ra[1])));
@@ -96,7 +96,7 @@ public class MapsListener extends NotificationListenerService {
         String cap = String.format(Locale.US, "%s MAPS | cat=%s ongoing=%s | título=[%s] texto=[%s] big=[%s] sub=[%s] info=[%s] resumo=[%s] | ícone=%s | -> %s",
                 new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()), n.category, ongoing, title, text,
                 big.equals(text) ? "=" : big, sub, info, summary, hash, i);
-        core.capture(cap);
+        core.capture("MAPS", cap);
 
         boolean isNav = navCat || (ongoing && i.distM >= 0);
         if (!isNav) return;
@@ -155,6 +155,7 @@ public class MapsListener extends NotificationListenerService {
             }
             long avg = sum / 64, bits = 0;
             for (int k = 0; k < 64; k++) if (lum[k] > avg) bits |= 1L << k;
+            if (bits == 0 || bits == -1L || Long.bitCount(bits) < 4 || Long.bitCount(bits) > 60) return null;
             return String.format("%016x", bits);
         } catch (Exception e) {
             return null;

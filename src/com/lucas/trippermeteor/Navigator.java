@@ -215,17 +215,27 @@ public class Navigator {
                     break;
                 }
             }
+            if (pk != null) {
+                for (Route.Radar r : route.radars) {
+                    if (Math.abs((r.along - along) - pk.dist) > 80) continue;
+                    pk.group.add(r.r);
+                    int l = r.r.maxspeed;
+                    if (l > 0) { pk.minLimit = pk.minLimit == 0 ? l : Math.min(pk.minLimit, l); pk.maxLimit = Math.max(pk.maxLimit, l); }
+                }
+                if (pk.group.size() > 1) pk.kind = "Radares";
+            }
         }
         int rdDist = pk == null ? 9999 : (pk.dist < 0 ? 0 : pk.dist);
         String radarTxt = "";
         boolean showRadar = pk != null && RadarAlert.radarWins(rdDist, dist, set.radarDist);
-        if (pk != null && rdDist <= set.radarDist && rdDist >= -30) radarTxt = RadarAlert.handle(pk.r, pk.dist, speed, set, out, pk.kind);
+        if (pk != null && rdDist <= set.radarDist && rdDist >= -30) radarTxt = RadarAlert.handle(pk, speed, set, out);
 
         byte[] f;
         if (showRadar) {
-            boolean lim = pk.r.maxspeed > 0;
+            int lmt = RadarAlert.limitOf(pk);
+            boolean lim = lmt > 0;
             f = Proto.nav(set.radarIcon, Math.max(0, rdDist), -1, -1, 2,
-                    lim ? Proto.BOTTOM_TOTAL : set.bottom, etaMin, lim ? pk.r.maxspeed : (int) remaining, night());
+                    lim ? Proto.BOTTOM_TOTAL : set.bottom, etaMin, lim ? lmt : (int) remaining, night());
         } else {
             f = Proto.nav(target.icon, dist, -1, nextIcon, 1, set.bottom, etaMin, (int) remaining, night());
         }
@@ -240,8 +250,8 @@ public class Navigator {
         s.sub = target.name == null ? "" : target.name;
         s.bottom = bottomText(etaMin, (int) remaining);
         s.radar = radarTxt;
-        s.limit = pk != null && !radarTxt.isEmpty() ? pk.r.maxspeed : 0;
-        s.radarId = pk != null && !pk.external && !radarTxt.isEmpty() ? pk.r.id : 0;
+        s.limit = pk != null && !radarTxt.isEmpty() ? RadarAlert.limitOf(pk) : 0;
+        s.radarId = pk != null && !pk.external && !radarTxt.isEmpty() && pk.group.size() <= 1 ? pk.r.id : 0;
         s.speedKmh = (int) Math.round(speed * 3.6);
         out.status(s);
     }

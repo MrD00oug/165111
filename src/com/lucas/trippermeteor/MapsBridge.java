@@ -25,6 +25,12 @@ public class MapsBridge {
     public boolean radarOnly = false;
     private MapsParser.Instr instr;
     private long instrAt = 0;
+    // o Maps tira a distância do texto perto da curva: guardamos a última e vamos descontando
+    private String distText = "";
+    private int knownDist = -1;
+    private long knownDistAt = 0, textSince = 0;
+    private long lockedRadar = 0;
+    private int failCount = 0;
     private double lat, lon, speed, heading = -1;
     private boolean haveFix = false;
     private double fetchLat = 999, fetchLon = 999;
@@ -58,12 +64,27 @@ public class MapsBridge {
     /** Chegou/atualizou a notificação de navegação do Maps. */
     public void onMaps(MapsParser.Instr i) {
         if (!enabled) return;
+        h.removeCallbacks(autoOff);
         boolean firstOne = instr == null;
+        long now = System.currentTimeMillis();
+        if (!i.text.equals(distText)) { distText = i.text; knownDist = -1; textSince = now; }
+        if (i.distM >= 0) { knownDist = i.distM; knownDistAt = now; }
         instr = i;
-        instrAt = System.currentTimeMillis();
+        instrAt = now;
         if (firstOne) out.log("espelhando o Google Maps", Pod.LOG_INFO);
+        if (i.arrived && !radarOnly) h.postDelayed(autoOff, 3 * 60 * 1000);
         render();
     }
+
+    /** Desliga o modo Maps sozinho 3 min depois de chegar (se não começar outra navegação). */
+    private final Runnable autoOff = new Runnable() {
+        @Override public void run() {
+            if (!enabled || radarOnly) return;
+            out.log("chegou: modo Google Maps desligado", Pod.LOG_INFO);
+            setEnabled(false);
+            out.finished();
+        }
+    };
 
     /** A navegação no Maps acabou. */
     public void onMapsEnded() {
@@ -71,6 +92,8 @@ public class MapsBridge {
         instr = null;
         out.log("navegação do Maps terminou", Pod.LOG_INFO);
         out.podFrame(Proto.idle(28, Navigator.night(set)));
+        h.removeCallbacks(autoOff);
+        if (!radarOnly) h.postDelayed(autoOff, 3 * 60 * 1000);
         publish();
     }
 
@@ -80,15 +103,20 @@ public class MapsBridge {
         haveFix = true;
         if (!enabled) return;
         // radares num raio de 15 km; baixa de novo quando andar 8 km
-        if (!fetching && Geo.dist(la, lo, fetchLat, fetchLon) > 8000 && System.currentTimeMillis() - lastFetchFail > 60000) {
+        if (!fetching && Geo.dist(la, lo, fetchLat, fetchLon) > 5000
+                && System.currentTimeMillis() - lastFetchFail > Math.min(10, 1 + failCount) * 60000L) {
             fetching = true;
             final double fl = la, fo = lo;
             io.execute(() -> {
                 try {
-                    radars.ensureAround(fl, fo, 15);
-                    h.post(() -> { fetching = false; fetchLat = fl; fetchLon = fo; out.log("radares em volta: " + radars.size() + " na base", Pod.LOG_INFO); });
+                    radars.ensureAround(fl, fo, 8);
+                    h.post(() -> { fetching = false; failCount = 0; fetchLat = fl; fetchLon = fo; out.log("radares em volta: " + radars.size() + " na base", Pod.LOG_INFO); });
                 } catch (Exception e) {
-                    h.post(() -> { fetching = false; lastFetchFail = System.currentTimeMillis(); out.log("radares: servidor não respondeu, usando os salvos", Pod.LOG_ERR); });
+                    h.post(() -> {
+                        fetching = false;
+                        lastFetchFail = System.currentTimeMillis();
+                        if (failCount++ == 0) out.log("radares: servidor não respondeu, usando os " + radars.size() + " salvos", Pod.LOG_ERR);
+                    });
                 }
             });
         }
@@ -109,12 +137,16 @@ public class MapsBridge {
         MapsParser.Instr i = instr;
         long now = System.currentTimeMillis();
 
-        // distância estimada entre uma atualização do Maps e outra (usa a velocidade do GPS)
+        // distância: a última que o Maps mandou pra essa instrução, descontando o que andou desde então
         int dist = -1;
-        if (i != null && i.distM >= 0) {
-            double el = (now - instrAt) / 1000.0;
-            double est = i.distM - (speed > 1 ? speed * Math.min(el, 8) : 0);
-            dist = (int) Math.max(0, Math.round(est));
+        boolean hold = false;
+        if (i != null) {
+            if (knownDist >= 0) {
+                double el = Math.min((now - knownDistAt) / 1000.0, 15);
+                dist = (int) Math.max(0, Math.round(knownDist - (speed > 1 ? speed * el : 0)));
+            } else if (now - textSince < 2500) {
+                hold = true; // instrução nova ainda sem distância: segura a tela anterior um instante
+            } else dist = 0;
         }
         int etaMin = -1;
         if (i != null && i.etaH >= 0) {
@@ -124,20 +156,19 @@ public class MapsBridge {
         } else if (i != null && i.remainMin >= 0) etaMin = i.remainMin;
         int remain = i == null ? -1 : i.remainM;
 
-        // radar: primeiro o alerta do Radarbot; se não tiver, a base (pela posição e rumo)
+        // radar: primeiro o alerta do Radarbot; se não, a base. Sem rota, só vale radar ANTES da próxima curva.
         RadarAlert.Pick pk = RadarAlert.external(radars, set, speed);
         if (pk == null && haveFix) {
-            Object[] a = radars.ahead(lat, lon, heading, set.radarDist);
-            if (a != null) {
-                pk = new RadarAlert.Pick();
-                pk.r = (RadarStore.Radar) a[0];
-                pk.dist = (int) Math.round((Double) a[1]);
-            }
+            int maxD = set.radarDist;
+            if (i != null && dist >= 0 && isTurn(i.icon)) maxD = Math.min(maxD, dist + 25);
+            pk = RadarAlert.pickBase(radars.scan(lat, lon, heading, maxD, lockedRadar), lockedRadar);
         }
+        lockedRadar = pk != null && !pk.external ? pk.r.id : 0;
         RadarStore.Radar rd = pk == null ? null : pk.r;
         int rdDist = pk == null ? 9999 : (pk.dist < 0 ? 0 : pk.dist);
-        String radarTxt = pk != null ? RadarAlert.handle(pk.r, pk.dist, speed, set, out, pk.kind) : "";
+        String radarTxt = pk != null ? RadarAlert.handle(pk, speed, set, out) : "";
         boolean showRadar = pk != null && RadarAlert.radarWins(rdDist, i == null ? -1 : dist, set.radarDist);
+        int limit = RadarAlert.limitOf(pk);
 
         int bottom = set.bottom;
         if (bottom == Proto.BOTTOM_ARRIVAL && etaMin < 0) bottom = remain >= 0 ? Proto.BOTTOM_TOTAL : Proto.BOTTOM_NONE;
@@ -145,9 +176,11 @@ public class MapsBridge {
 
         byte[] f;
         if (showRadar) {
-            boolean lim = rd.maxspeed > 0;
+            boolean lim = limit > 0;
             f = Proto.nav(set.radarIcon, Math.max(0, rdDist), -1, -1, 2, lim ? Proto.BOTTOM_TOTAL : bottom,
-                    Math.max(0, etaMin), lim ? rd.maxspeed : Math.max(0, remain), night);
+                    Math.max(0, etaMin), lim ? limit : Math.max(0, remain), night);
+        } else if (hold) {
+            f = null;
         } else if (i != null && now - instrAt < 60000) {
             int icon = i.icon >= 0 ? i.icon : 9;
             if (icon == 49 && set.exitIcons && i.exit >= 1 && i.exit <= 9) icon = 49 + i.exit;
@@ -155,7 +188,7 @@ public class MapsBridge {
         } else {
             f = Proto.idle(28, night);
         }
-        out.podFrame(f);
+        if (f != null) out.podFrame(f);
 
         Navigator.Status s = new Navigator.Status();
         s.active = true;
@@ -182,10 +215,15 @@ public class MapsBridge {
             s.sub = "Abra o Maps, escolha o destino e toque em Iniciar";
         }
         s.radar = radarTxt;
-        s.limit = rd != null ? rd.maxspeed : 0;
-        s.radarId = pk != null && !pk.external ? pk.r.id : 0;
+        s.limit = limit;
+        s.radarId = pk != null && !pk.external && pk.group.size() <= 1 ? pk.r.id : 0;
         s.speedKmh = haveFix ? (int) Math.round(speed * 3.6) : -1;
         out.status(s);
+    }
+
+    /** Manobra de verdade (muda de via). Seguir reto / manter-se não conta. */
+    static boolean isTurn(int icon) {
+        return icon >= 0 && icon != 9 && icon != 43 && icon != 44 && icon != 27 && icon != 3 && icon != 4;
     }
 
     private void publish() {

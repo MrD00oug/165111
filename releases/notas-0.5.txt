@@ -1,0 +1,8 @@
+- Radar não pisca mais: o radar na tela fica travado até você passar
+- Modo Maps: só avisa radar ANTES da próxima curva (nada de radar da rua que você não vai pegar)
+- Pistas paralelas (Marginal): vira um aviso só, com o MENOR limite
+- Distância continua contando perto da curva (o Maps para de mandar)
+- "Chegando" vira bandeira de destino; modo Maps desliga sozinho 3 min depois de chegar
+- Navegação encerra sozinha 10 min depois da moto desligada
+- Capturas do Radarbot/Waze não somem mais no meio das do Maps
+- Aviso de versão nova no Início

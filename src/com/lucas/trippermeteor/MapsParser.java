@@ -71,7 +71,7 @@ public final class MapsParser {
         Matcher em = EXITN.matcher(all);
         if (em.find()) r.exit = Integer.parseInt(em.group(1));
         else r.exit = ordinalExit(all);
-        if (r.icon == 0 || r.icon == 1 || r.icon == 2) r.arrived = all.contains("chegou");
+        if (r.icon == 0 || r.icon == 1 || r.icon == 2) r.arrived = all.contains("chegou") || all.contains("chegando");
 
         // sub-texto: chegada, tempo e distância que faltam
         String ss = norm(s.isEmpty() ? "" : s);
@@ -157,7 +157,7 @@ public final class MapsParser {
     public static int icon(String n) {
         // "a direita"/"a esquerda" (de "à direita"): evita confundir com nome de rua, tipo "Rua Direita"
         boolean L = n.matches(".*\\ba esquerda.*"), R = n.matches(".*\\ba direita.*");
-        if (n.contains("chegou") || n.contains("destino") || n.contains("chegada ao")) return L ? 1 : R ? 2 : 0;
+        if (n.contains("chegou") || n.contains("chegando") || n.contains("destino") || n.contains("chegada ao")) return L ? 1 : R ? 2 : 0;
         if (n.contains("retorno")) return 61;
         if (n.contains("rotatoria") || n.contains("rotunda") || n.contains("balao")) return 49;
         if (n.contains("balsa")) return 62;
